@@ -78,7 +78,15 @@ var GridBuilder = (function () {
                 return false;
             }
 
-
+            //An attempt to move to cell with value of 0
+            if (mCellMap[lastElement.x + "_" + lastElement.y].winningScore == 0) {
+            	return false;
+            }
+        
+            // Attempt to move to cell with greater value;
+            /*if (mCellMap[x + "_" + y].winningScore > mCellMap[lastElement.x + "_" + lastElement.y].winningScore) {
+            	return false;
+            }*/
         }
 
 
