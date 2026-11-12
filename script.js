@@ -6,6 +6,10 @@ $(function () {
     var scoringTrigger = document.getElementById('scoringButton');
     var form = document.getElementById('scoringForm');
     var traceTimer = null;
+    var movie = null;
+    var movieTimer = null;
+    var moviePlaying = false;
+    var movieSpeeds = [0.25, 0.5, 1, 2, 4, 8, 16];
     var activeScoring = Object.assign({}, AlignmentEngine.defaults);
     var popupView = new URLSearchParams(window.location.search).get('view') === 'matrix';
     var initialState = null;
@@ -91,12 +95,15 @@ $(function () {
         $('#windowSummary').text($('#seq_1').val().length + ' \u00d7 ' + $('#seq_2').val().length + ' letters \u00b7 ' + summary);
     }
     function clearGrid() {
+        stopMovie(false);
         GridBuilder.reset();
         $cont.empty();
         $result.empty();
         $('#alignmentScore').empty();
+        $('.btn-movie').prop('disabled', true);
     }
     function buildGrid() {
+        stopMovie(false);
         var side = $('#seq_1').val(), top = $('#seq_2').val();
         $('#inputError').prop('hidden', true).empty();
         updateSummary();
@@ -104,6 +111,7 @@ $(function () {
         try {
             GridBuilder.rebuildTable($cont, $result, activeScoring.match, activeScoring.mismatch,
                 activeScoring.gap, side, top, activeScoring);
+            $('.btn-movie').prop('disabled', false);
             return true;
         } catch (error) {
             clearGrid();
@@ -125,6 +133,106 @@ $(function () {
         if (!buildGrid()) { return; }
         GridBuilder.highlightOptimal();
         animateTrace();
+    }
+
+    function movieSpeed() { return movieSpeeds[Number($('#movieSpeed').val())]; }
+    function updateMovieControls() {
+        if (!movie) { return; }
+        var atEnd = movie.index === movie.plan.total - 1;
+        $('#moviePlay').text(moviePlaying ? 'Pause' : atEnd ? 'Replay' : 'Play')
+            .attr('aria-label', moviePlaying ? 'Pause movie' : atEnd ? 'Replay movie' : 'Play movie');
+        $('#moviePrevious').prop('disabled', movie.index === 0);
+        $('#movieNext').prop('disabled', atEnd);
+        $('#movieExplanation').attr('aria-live', moviePlaying ? 'off' : 'polite');
+    }
+    function drawMovie() {
+        if (!movie) { return; }
+        var frame = movie.plan.frame(movie.index);
+        GridBuilder.showMovieFrame(frame);
+        $('#moviePhase').text(frame.phase);
+        $('#movieCounter').text((movie.index + 1).toLocaleString('en-US') + ' / ' + movie.plan.total.toLocaleString('en-US'));
+        $('#movieProgress').val(movie.index).attr('aria-valuetext', frame.phase + ': ' + frame.heading +
+            '. Step ' + (movie.index + 1) + ' of ' + movie.plan.total);
+        var $explanation = $('#movieExplanation').empty();
+        var $heading = $('<div class="movie-heading" />').append($('<strong />').text(frame.heading));
+        $heading.append($('<span class="movie-cell-score" />').text('Cell score ' + format(frame.cell.score)));
+        $explanation.append($heading, $('<p class="movie-narration" />').text(frame.description));
+        var $candidates = $('<div class="movie-candidates" />');
+        var trace = frame.path.length > 0;
+        function wins(option) {
+            return AlignmentEngine.equal(option.score, frame.cell.score) && (frame.cell.score !== 0 || option.direction === 'r');
+        }
+        var winners = frame.candidates.filter(wins);
+        frame.candidates.forEach(function(option) {
+            var best = trace || wins(option);
+            var $candidate = $('<div class="movie-candidate" />').toggleClass('best', best);
+            var operation = option.direction === 'r' ? 'new local alignment' :
+                option.direction === 'd' ? 'pair' : 'gap in Seq ' + (option.direction === 'u' ? '2' : '1');
+            var $title = $('<div class="movie-candidate-heading" />').append($('<strong />').text(option.label + ' \u00b7 ' + operation));
+            if (best) { $title.append($('<span />').text(trace ? 'Chosen' : option.direction === 'r' ? 'Restart' : winners.length > 1 ? 'Tied best' : 'Best')); }
+            $candidate.append($title, $('<p class="movie-source-label" />').text(option.direction === 'r' ?
+                'Zero reset \u00b7 no predecessor' : 'From row ' + option.fromY + ', column ' + option.fromX));
+            option.variants.forEach(function(variant) {
+                var label = variant.label === 'Open' ? 'Open: ' : variant.label === 'Extend' ? 'Extend: ' : '';
+                var $line = $('<p class="movie-calculation" />').toggleClass('variant-best', AlignmentEngine.equal(variant.score, option.score));
+                $line.append(document.createTextNode(label + format(variant.previous) +
+                    (variant.delta < 0 ? ' \u2212 ' : ' + ') + format(Math.abs(variant.delta)) + ' = '),
+                    $('<b />').text(format(variant.score)));
+                $candidate.append($line);
+            });
+            $candidates.append($candidate);
+        });
+        $explanation.append($candidates, $('<p class="movie-reason" />').text(frame.reason));
+        updateMovieControls();
+    }
+    function scheduleMovie() {
+        clearTimeout(movieTimer);
+        if (!movie || !moviePlaying) { return; }
+        movieTimer = setTimeout(function() {
+            if (!movie || !moviePlaying) { return; }
+            if (movie.index < movie.plan.total - 1) { movie.index++; }
+            if (movie.index === movie.plan.total - 1) { moviePlaying = false; }
+            drawMovie();
+            scheduleMovie();
+        }, 1000 / movieSpeed());
+    }
+    function pauseMovie() {
+        clearTimeout(movieTimer);
+        moviePlaying = false;
+        updateMovieControls();
+    }
+    function stopMovie(restore) {
+        clearTimeout(movieTimer);
+        moviePlaying = false;
+        if (!movie) { return; }
+        var previous = movie;
+        movie = null;
+        GridBuilder.endMovie();
+        $('#moviePanel').prop('hidden', true);
+        $('.btn-movie').attr('aria-expanded', 'false');
+        if (restore) {
+            GridBuilder.restorePath(previous.path);
+            $cont.scrollLeft(previous.view.left).scrollTop(previous.view.top);
+            $result.scrollLeft(previous.view.alignment);
+        }
+    }
+    function startMovie(trigger) {
+        if (movie) { stopMovie(true); return; }
+        if (!panel.hidden && !applyLiveScoring()) { return; }
+        var engine = GridBuilder.alignmentModel();
+        if (!engine) { return; }
+        clearTimeout(traceTimer);
+        var info = GridBuilder.optimalInfo();
+        movie = { plan: AlignmentMovie.create(engine, info.index), index: 0,
+            path: GridBuilder.exportPath(), trigger: trigger,
+            view: { left: $cont.scrollLeft(), top: $cont.scrollTop(), alignment: $result.scrollLeft() } };
+        GridBuilder.beginMovie(movie.plan);
+        $('#moviePanel').prop('hidden', false);
+        $('.btn-movie').attr('aria-expanded', 'true');
+        $('#movieProgress').attr('max', movie.plan.total - 1);
+        moviePlaying = true;
+        drawMovie();
+        scheduleMovie();
     }
 
     function positionScoringPanel() {
@@ -210,6 +318,38 @@ $(function () {
         if (!panel.hidden) { applyLiveScoring(); }
         restart();
     });
+    $('.btn-movie').on('click', function() { startMovie(this); });
+    $('#moviePlay').on('click', function() {
+        if (!movie) { return; }
+        if (moviePlaying) { pauseMovie(); return; }
+        if (movie.index === movie.plan.total - 1) { movie.index = 0; }
+        moviePlaying = true;
+        drawMovie();
+        scheduleMovie();
+    });
+    $('#moviePrevious, #movieNext, #movieRestart').on('click', function() {
+        if (!movie) { return; }
+        pauseMovie();
+        movie.index = this.id === 'movieRestart' ? 0 : Math.max(0,
+            Math.min(movie.plan.total - 1, movie.index + (this.id === 'movieNext' ? 1 : -1)));
+        drawMovie();
+    });
+    $('#movieProgress').on('input', function() {
+        if (!movie) { return; }
+        pauseMovie();
+        movie.index = Number(this.value);
+        drawMovie();
+    });
+    $('#movieSpeed').on('input', function() {
+        $('#movieSpeedValue').text(movieSpeed() + '\u00d7');
+        $(this).attr('aria-valuetext', movieSpeed() + ' times normal speed');
+        scheduleMovie();
+    }).trigger('input');
+    $('#movieClose').on('click', function() {
+        var trigger = movie && movie.trigger;
+        stopMovie(true);
+        if (trigger) { trigger.focus({ preventScroll: true }); }
+    });
     $('.btn-scoring').on('click', function () {
         if (!panel.hidden) { closeScoring(); return; }
         scoringTrigger = this;
@@ -232,6 +372,12 @@ $(function () {
     $('.scoring-close').on('click', closeScoring);
     $(window).on('resize scroll', positionScoringPanel);
     $(document).on('keydown', function (event) {
+        if (event.key === 'Escape' && movie &&
+            (document.getElementById('moviePanel').contains(document.activeElement) ||
+                document.activeElement.classList.contains('btn-movie'))) {
+            event.preventDefault();
+            $('#movieClose').click();
+        }
         if (event.key === 'Escape' && !panel.hidden &&
             (panel.contains(document.activeElement) || document.activeElement.classList.contains('btn-scoring'))) {
             event.preventDefault();
@@ -250,6 +396,7 @@ $(function () {
         updateInputs();
     });
     $('.btn-clear').on('click', function () {
+        stopMovie(false);
         if (!panel.hidden) { applyLiveScoring(); }
         if ($('#grid').length) { GridBuilder.startCustomPath(); }
     });

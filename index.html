@@ -9,6 +9,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
     <script src="SubstitutionMatrices.js"></script>
     <script src="AlignmentEngine.js"></script>
+    <script src="AlignmentMovie.js"></script>
     <script src="GridBuilder.js"></script>
     <script src="script.js" defer></script>
 </head>
@@ -20,6 +21,7 @@
         <div class="actions popup-actions" aria-label="Path controls">
             <button type="button" class="btn-compute">Optimal path</button>
             <button type="button" class="btn-clear">Clear path</button>
+            <button type="button" class="btn-movie" aria-expanded="false" aria-controls="moviePanel" title="Watch this alignment fill and trace back">&#9654; Movie</button>
             <button type="button" class="btn-scoring">Scoring function</button>
         </div>
         <nav class="siblings" aria-label="Related alignment demos">
@@ -52,6 +54,7 @@
             <div class="actions">
                 <button type="button" class="btn-compute primary">Compute</button>
                 <button type="button" class="btn-clear">Clear path</button>
+                <button type="button" class="btn-movie" aria-expanded="false" aria-controls="moviePanel" title="Watch this alignment fill and trace back">&#9654; Movie</button>
             </div>
             <p class="examples">Try:
                 <button type="button" data-seq1="GATTACA" data-seq2="GTCGACG" data-match="1" data-mismatch="-1" data-gap="-2">GATTACA / GTCGACG</button>
@@ -66,7 +69,6 @@
         <form id="scoringForm" novalidate>
             <div class="panel-heading">
                 <h2 id="scoringTitle">Scoring function</h2>
-                <span class="live-indicator">Live</span>
                 <button type="button" class="scoring-close" aria-label="Close scoring function">&times;</button>
             </div>
             <fieldset class="scoring-section">
@@ -104,6 +106,24 @@
     </aside>
 
     <section class="card work" aria-label="Scoring grid">
+        <div id="moviePanel" class="movie-panel" role="region" aria-label="Smith–Waterman movie" hidden>
+            <div class="movie-toolbar">
+                <div class="movie-transport" role="group" aria-label="Movie playback">
+                    <button type="button" id="movieRestart" aria-label="Restart movie" title="Restart movie">&#8634;</button>
+                    <button type="button" id="moviePrevious" aria-label="Previous movie step" title="Previous step">&#8249;</button>
+                    <button type="button" id="moviePlay" class="movie-play">Pause</button>
+                    <button type="button" id="movieNext" aria-label="Next movie step" title="Next step">&#8250;</button>
+                </div>
+                <label class="movie-speed" for="movieSpeed">Speed <input id="movieSpeed" type="range" min="0" max="6" step="1" value="2"><output id="movieSpeedValue" for="movieSpeed">1×</output></label>
+                <button type="button" id="movieClose" class="movie-close" aria-label="Close movie" title="Close movie">&times;</button>
+            </div>
+            <div class="movie-progress-row">
+                <span id="moviePhase" class="movie-phase"></span>
+                <input id="movieProgress" type="range" min="0" max="1" step="1" value="0" aria-label="Movie position">
+                <span id="movieCounter" class="movie-counter"></span>
+            </div>
+            <div id="movieExplanation" class="movie-explanation" aria-live="off" aria-atomic="true"></div>
+        </div>
         <div id="cont" class="scroll" tabindex="0" role="region" aria-label="Scoring matrix"></div>
     </section>
 

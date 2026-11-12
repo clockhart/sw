@@ -25,6 +25,14 @@ If more than one optimal local traceback exists, the Alignment header shows **Ne
 
 Opposite gap directions may occur consecutively; changing direction starts a new gap. A contiguous gap is never reopened to avoid its extension score. With unusual positive extension scores, a gap state can retain a nonpositive intermediate score so the original creation cost is preserved. Floating-point tie comparisons use a tolerance of `1e-9`. Computing and rendering the full grid grows with the product of the sequence lengths.
 
+## Alignment movie
+
+**Movie** plays a guided animation for the current sequences and scoring function. It initializes the origin, top row, and left column to zero, then fills the interior row by row. Each lesson compares the three move scores with the zero restart and highlights their source cells. Traceback starts at the selected maximum-scoring endpoint and stops at its zero restart, revealing one local alignment column at a time. Ends outside the aligned region are omitted. An all-zero matrix completes the lesson with an empty result and no fabricated traceback.
+
+Pause, step backward or forward, restart, or seek with the progress slider. Speed ranges from `0.25×` to `16×` and can change during playback. The matrix scrolls to follow the current cell. Closing the movie restores the previous path, selected alternative, and matrix/alignment scroll positions; sequence or scoring changes exit playback and show the updated complete matrix. Playback works with both gap models and every bundled substitution matrix, including alternate local endpoints. The red theme is retained.
+
+Lessons are generated on demand from the existing alignment engine rather than storing a frame for every cell. There is no separate movie length limit; the underlying full-grid computation and rendering still grow with the product of the sequence lengths.
+
 ## Substitution matrix data
 
 The following standard tables are bundled in [SubstitutionMatrices.js](SubstitutionMatrices.js), with the source headers retained as metadata:
@@ -36,6 +44,8 @@ These files come from the official Biopython repository. Its source license is i
 
 ## Verification
 
-Run `node --test tests/alignment-engine.test.js`.
+Run `node --test tests/*.test.js`.
 
 The tests compare every cell score, the best local score, placement counts, and every optimal traceback against direct exhaustive enumeration for short sequences under simple, affine, matrix, fractional, zero, and positive gap scores. They also check internal local regions, tied endpoints, empty results, large exact counts, direct alignment selection, matrix orientation, and invalid alphabets. Browser verification covers live input validation, scoring combinations, alternate navigation, manual paths, scrolling, local hover explanations, and phone layouts.
+
+Movie tests verify dependency order, zero boundaries and restarts, internal local endpoints, selected alternate alignments, empty results, and reconciliation of prefix/suffix scores during affine traceback. Browser checks cover playback timing, speed changes, seeking, reverse steps, edits, workspace restoration, and desktop/phone layouts.

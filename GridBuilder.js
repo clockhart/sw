@@ -33,6 +33,9 @@ var GridBuilder = (function () {
         mGapSymbol = "-",
         mIsCustomPathMode = false,
         mIsBuildingOptimal = false,
+        mMovieActive = false,
+        mMovieCells = [],
+        mMovieRevealed = 0,
         mActiveAlignmentColumn = null;
 
     function onCellClicked(dom, x, y, state) {
@@ -110,6 +113,12 @@ var GridBuilder = (function () {
         onPathUpdate();
         return true;
 
+    }
+
+    function showEmptyAlignment() {
+        $('#alignmentScore').text('Score = 0');
+        mDomResultContainer.append($('<p class="alignment-empty" />')
+            .text('No positive-scoring local alignment. Try different sequences or scoring.'));
     }
 
     function onPathUpdate() {
@@ -208,11 +217,7 @@ var GridBuilder = (function () {
         mDomResultContainer.empty();
         $('#alignmentScore').text(columns.length ? 'Score = ' + AlignmentEngine.format(score) : '');
         if (!columns.length) {
-            if (!mIsCustomPathMode && mEngine && !mEngine.count) {
-                $('#alignmentScore').text('Score = 0');
-                mDomResultContainer.append($('<p class="alignment-empty" />')
-                    .text('No positive-scoring local alignment. Try different sequences or scoring.'));
-            }
+            if (!mIsCustomPathMode && mEngine && !mEngine.count && !mMovieActive) { showEmptyAlignment(); }
             return;
         }
 
@@ -310,7 +315,7 @@ var GridBuilder = (function () {
     }
 
     function updateAlternatives() {
-        var visible = mEngine && mEngine.count > 1n && mOptimalRank !== null && !mIsCustomPathMode;
+        var visible = mEngine && mEngine.count > 1n && mOptimalRank !== null && !mIsCustomPathMode && !mMovieActive;
         $('#alignmentAlternatives').prop('hidden', !visible);
         if (!visible) { return; }
         var total = mEngine.count.toString();
@@ -390,7 +395,7 @@ var GridBuilder = (function () {
                 '; matrix candidates use local alignment states.';
         } else if (!step.x || !step.y) {
             reason = 'Smith\u2013Waterman keeps the first row and column at zero. This manually selected boundary gap is scored separately.';
-        } else if (affine && mOptimalRank !== null && !mEngine.equal(transition.score, best)) {
+        } else if (affine && (mOptimalRank !== null || mMovieActive) && !mEngine.equal(transition.score, best)) {
             reason = 'This optimal traceback retains the ' + stateLabel(step.direction) + ' state (score ' +
                 AlignmentEngine.format(transition.score) + ') to preserve its gap history. The displayed cell maximum is ' +
                 AlignmentEngine.format(best) + '.';
@@ -400,7 +405,7 @@ var GridBuilder = (function () {
         } else if (chosen.score < best && !mEngine.equal(chosen.score, best)) {
             reason = 'This custom step uses a matrix candidate of ' + AlignmentEngine.format(chosen.score) +
                 ', below the best available score (' + AlignmentEngine.format(best) + ').';
-        } else if (step.fromState === 'r' && mOptimalRank !== null) {
+        } else if (step.fromState === 'r' && (mOptimalRank !== null || mMovieActive)) {
             reason = 'This local alignment starts at row ' + step.fromY + ', column ' + step.fromX +
                 ' with score 0. The ' + move + ' step contributes ' + AlignmentEngine.format(contribution) + '.';
         } else if (winners.length > 1) {
@@ -647,6 +652,7 @@ var GridBuilder = (function () {
         }
 
         $('#grid td').click(function() {
+            if (mMovieActive) { return; }
             var self = $(this);
             onCellClicked(
                 self,
@@ -657,7 +663,7 @@ var GridBuilder = (function () {
 
         $('#grid td').hover(function() {
             
-            if (mIsCustomPathMode) {
+            if (mIsCustomPathMode || mMovieActive) {
                 return;
             }
             clearAlignmentInspection();
@@ -707,6 +713,66 @@ var GridBuilder = (function () {
 
     mSelf = {
 
+        alignmentModel: function() { return mEngine; },
+
+        beginMovie: function(plan) {
+            this.startCustomPath();
+            mMovieActive = true;
+            mMovieRevealed = 0;
+            mMovieCells = [];
+            mDomGridTable.addClass('movie-grid instant');
+            for (var i = 0; i < plan.fillCount; i++) {
+                var cell = plan.cellAt(i), dom = document.getElementById(cell.x + '_' + cell.y);
+                dom.textContent = '';
+                dom.classList.add('movie-pending');
+                dom.setAttribute('aria-label', 'Row ' + cell.y + ', column ' + cell.x + ': not filled yet');
+                mMovieCells.push({ cell: cell, dom: dom });
+            }
+        },
+
+        showMovieFrame: function(frame) {
+            if (!mMovieActive) { return; }
+            while (mMovieRevealed < frame.revealed) {
+                var entry = mMovieCells[mMovieRevealed++];
+                entry.dom.textContent = AlignmentEngine.format(entry.cell.score);
+                entry.dom.classList.remove('movie-pending');
+                entry.dom.removeAttribute('aria-label');
+            }
+            while (mMovieRevealed > frame.revealed) {
+                entry = mMovieCells[--mMovieRevealed];
+                entry.dom.textContent = '';
+                entry.dom.classList.add('movie-pending');
+                entry.dom.setAttribute('aria-label', 'Row ' + entry.cell.y + ', column ' + entry.cell.x + ': not filled yet');
+            }
+            this.restorePath({ custom: false, cells: frame.path, movie: true });
+            mDomGridTable.find('.movie-current, .movie-source, .movie-header')
+                .removeClass('movie-current movie-source movie-header');
+            frame.sources.forEach(function(source) {
+                document.getElementById(source.x + '_' + source.y).classList.add('movie-source');
+            });
+            var current = document.getElementById(frame.cell.x + '_' + frame.cell.y);
+            current.classList.add('movie-current');
+            $('#top_seq_' + (frame.cell.x - 1) + ', #side_seq_' + (frame.cell.y - 1)).addClass('movie-header');
+            revealMatrixCell(current);
+            if (frame.path.length > 1 && frame.phase !== 'Complete') {
+                $('#alignmentScore').text('Aligned suffix = ' + AlignmentEngine.format(frame.suffixScore));
+            }
+            if (frame.phase === 'Complete' && !mEngine.count) { showEmptyAlignment(); }
+        },
+
+        endMovie: function() {
+            if (!mMovieActive) { return; }
+            mMovieActive = false;
+            mMovieCells.forEach(function(entry) {
+                entry.dom.textContent = AlignmentEngine.format(entry.cell.score);
+                entry.dom.classList.remove('movie-pending', 'movie-current', 'movie-source');
+                entry.dom.removeAttribute('aria-label');
+            });
+            mDomGridTable.removeClass('movie-grid').find('.movie-header').removeClass('movie-header');
+            mMovieCells = [];
+            mMovieRevealed = 0;
+        },
+
         exportPath: function() {
             return {
                 custom: mIsCustomPathMode,
@@ -723,8 +789,8 @@ var GridBuilder = (function () {
             mDomGridTable.find('th').removeClass('highlight');
             mCurrentPath = [];
             mIsCustomPathMode = !!state.custom;
-            mOptimalRank = state.custom ? null : mEngine.rankPath(state.cells);
-            if (mOptimalRank === null) { mIsCustomPathMode = true; }
+            mOptimalRank = state.custom || state.movie ? null : mEngine.rankPath(state.cells);
+            if (mOptimalRank === null && !state.movie) { mIsCustomPathMode = true; }
             mIsBuildingOptimal = true;
             state.cells.forEach(function(cell) {
                 if (!cell || !Number.isInteger(cell.x) || !Number.isInteger(cell.y)) { return; }
@@ -764,6 +830,7 @@ var GridBuilder = (function () {
         },
 
         reset: function() {
+            this.endMovie();
             clearAlignmentInspection();
             hideTooltip();
             mCurrentPath = [];
@@ -785,6 +852,8 @@ var GridBuilder = (function () {
         },
 
         rebuildTable: function(domContainer, resultContainer, matchScore, mismatchScore, gapScore, seqSide, seqTop, scoringOptions) {
+
+            this.endMovie();
 
             if (mIsFirstCall) {
                 $(document).on('pointerdown', function(event) {
