@@ -1,116 +1,140 @@
-<html>
+<!DOCTYPE html>
+<html lang="en">
 <head>
-    <title>Interactive demo for Smith-Waterman algorithm</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
-    <meta name="HandheldFriendly" content="True">
-    <link href="style.css" rel="stylesheet" />
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/2.1.4/jquery.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smith–Waterman Interactive Demo</title>
+    <meta name="description" content="Step through the Smith–Waterman local alignment algorithm cell by cell: edit the sequences and scores, hover to see how each score was chosen, and trace your own path.">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+    <script src="SubstitutionMatrices.js"></script>
+    <script src="AlignmentEngine.js"></script>
     <script src="GridBuilder.js"></script>
+    <script src="script.js" defer></script>
 </head>
+<body>
+<main>
+    <header>
+        <h1><a href="./">Smith<span>–Waterman</span></a></h1>
+        <p id="windowSummary" class="window-summary"></p>
+        <div class="actions popup-actions" aria-label="Path controls">
+            <button type="button" class="btn-compute">Optimal path</button>
+            <button type="button" class="btn-clear">Clear path</button>
+            <button type="button" class="btn-scoring">Scoring function</button>
+        </div>
+        <nav class="siblings" aria-label="Related alignment demos">
+            <a href="https://lockhartlab.org/nw">Needleman–Wunsch</a>
+            <a href="https://lockhartlab.org/sw" aria-current="page">Smith–Waterman</a>
+        </nav>
+    </header>
 
-<script>
-function restart(){
-    clear();
-   GridBuilder.highlightOptimal();
-}
+    <section class="card controls" aria-label="Alignment inputs">
+        <div class="fields">
+            <div class="sequences">
+                <label class="field field-seq">
+                    <span class="label">Sequence 1 <small>(rows)</small></span>
+                    <input id="seq_1" class="seq" value="GATTACA" autocomplete="off" autocapitalize="characters" spellcheck="false">
+                </label>
+                <button type="button" id="swapSequences" class="swap-sequences" aria-label="Swap sequences" title="Swap row and column sequences">
+                    <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4"/></svg>
+                </button>
+                <label class="field field-seq">
+                    <span class="label">Sequence 2 <small>(columns)</small></span>
+                    <input id="seq_2" class="seq" value="GTCGACG" autocomplete="off" autocapitalize="characters" spellcheck="false">
+                </label>
+            </div>
+            <div class="actions scoring-action">
+                <button type="button" id="scoringButton" class="btn-scoring" aria-expanded="false" aria-controls="scoringPanel">Scoring function <span aria-hidden="true">&#9881;</span></button>
+            </div>
+        </div>
 
-function clear(){
-    var cont = $('#cont');
-    var resultContainer = $('#result');
-    var matchScore = parseInt($('#matchScore').val());
-    var mismatchScore = parseInt($('#mismatchScore').val());
-    var gapScore = parseInt($('#gapScore').val());
-    var seqSide = $('#seq_1').val();
-    var seqTop = $('#seq_2').val();
-    
-    GridBuilder.rebuildTable(cont, resultContainer, matchScore, mismatchScore, gapScore, seqSide, seqTop);
-}
+        <div class="bar">
+            <div class="actions">
+                <button type="button" class="btn-compute primary">Compute</button>
+                <button type="button" class="btn-clear">Clear path</button>
+            </div>
+            <p class="examples">Try:
+                <button type="button" data-seq1="GATTACA" data-seq2="GTCGACG" data-match="1" data-mismatch="-1" data-gap="-2">GATTACA / GTCGACG</button>
+                <button type="button" data-seq1="HEAGAWGHEE" data-seq2="PAWHEAE" title="HEAGAWGHEE / PAWHEAE" aria-label="Load amino acid sequences HEAGAWGHEE / PAWHEAE">HEAGAWGHEE / PAWHEAE</button>
+            </p>
+        </div>
+        <p id="scoringSummary" class="scoring-summary"></p>
+        <p id="inputError" class="input-error" role="alert" hidden></p>
+    </section>
 
-$(document).ready(function(){
+    <aside id="scoringPanel" class="card scoring-panel" aria-labelledby="scoringTitle" hidden>
+        <form id="scoringForm" novalidate>
+            <div class="panel-heading">
+                <h2 id="scoringTitle">Scoring function</h2>
+                <span class="live-indicator">Live</span>
+                <button type="button" class="scoring-close" aria-label="Close scoring function">&times;</button>
+            </div>
+            <fieldset class="scoring-section">
+                <legend>Letter pairs</legend>
+                <div class="scoring-choices">
+                    <label class="scoring-choice"><input type="radio" name="substitutionModel" value="simple" checked><span>Match / mismatch</span></label>
+                    <label class="scoring-choice"><input type="radio" name="substitutionModel" value="matrix"><span>Substitution matrix</span></label>
+                </div>
+                <div id="simpleSubstitutionFields" class="settings-grid">
+                    <label class="field"><span class="label">Match</span><input class="params" id="matchScore" type="number" step="any" value="1" required></label>
+                    <label class="field"><span class="label">Mismatch</span><input class="params" id="mismatchScore" type="number" step="any" value="-1" required></label>
+                </div>
+                <div id="matrixFields" hidden>
+                    <label class="field"><span class="label">Matrix</span><select id="matrixName"></select></label>
+                    <p id="matrixDescription" class="settings-help"></p>
+                </div>
+            </fieldset>
+            <fieldset class="scoring-section">
+                <legend>Gaps</legend>
+                <div class="scoring-choices">
+                    <label class="scoring-choice"><input type="radio" name="gapModel" value="simple" checked><span>Simple</span></label>
+                    <label class="scoring-choice"><input type="radio" name="gapModel" value="affine"><span>Affine</span></label>
+                </div>
+                <div id="simpleGapFields" class="settings-grid">
+                    <label class="field"><span class="label">Gap score</span><input class="params" id="gapScore" type="number" step="any" value="-2" required></label>
+                </div>
+                <div id="affineGapFields" class="settings-grid" hidden>
+                    <label class="field"><span class="label">Gap creation</span><input class="params" id="gapOpenScore" type="number" step="any" value="-2" required></label>
+                    <label class="field"><span class="label">Gap extension</span><input class="params" id="gapExtendScore" type="number" step="any" value="-1" required></label>
+                </div>
+                <p id="gapDescription" class="settings-help"></p>
+            </fieldset>
+            <p id="scoringError" class="input-error" role="alert" hidden></p>
+        </form>
+    </aside>
 
-   
-   
-    restart();
-    /*
-    var ids = ["9_9", "9_8", "9_7", "8_6", "7_6", "6_5", "5_4", "5_3", "4_2", "3_2", "2_2", "1_1"];
-    var ids = ["9_10", "9_9", "8_8", "7_7", "6_6", "5_5", "4_4", "3_4", "2_3", "1_2"];
-    var ids = ["9_9", "9_8", "8_7", "7_6", "6_5", "5_4", "4_3", "3_3", "2_2", "1_1"];
-    for(idx in ids){
-        $('#' + ids[idx]).click();
-    }
-    */
-    
-    $('.seq').keyup(function(){
-        restart();
-    });
-   
-   $('.params').change(function(){
-        restart();
-    });
-    
-    $('.btn-clear').click(function(){
-        clear();
-    });
+    <section class="card work" aria-label="Scoring grid">
+        <div id="cont" class="scroll" tabindex="0" role="region" aria-label="Scoring matrix"></div>
+    </section>
 
-    $('.btn-compute').click(function(){
-        restart();
-    });
+    <section id="alignmentCard" class="card" aria-label="Alignment">
+        <div class="card-head">
+            <h2 id="alignmentHeading">Alignment</h2>
+            <div id="alignmentAlternatives" class="alignment-alternatives" role="group" aria-label="Optimal alignments" hidden>
+                <button type="button" id="previousAlignment" aria-label="Previous optimal alignment" title="Previous optimal alignment">&lsaquo;</button>
+                <span id="alignmentIndex" class="alignment-index" aria-live="polite"></span>
+                <button type="button" id="nextAlignment">Next alignment <span aria-hidden="true">&rsaquo;</span></button>
+            </div>
+            <p id="alignmentScore" class="alignment-score" aria-live="polite"></p>
+        </div>
+        <div id="result" class="scroll" tabindex="0" role="region" aria-labelledby="alignmentHeading"></div>
+    </section>
 
-    $('.btn-custom').click(function(){
-        GridBuilder.startCustomPath();
-    });
+    <details class="card how">
+        <summary>How it works</summary>
+        <ol>
+            <li><b>Set up the table.</b> One sequence down the side, the other across the top, each with an extra leading row or column initialized to zero.</li>
+            <li><b>Choose a scoring function.</b> Use match/mismatch scores or a substitution matrix, and simple or affine gap scores. Simple gaps charge each letter equally; affine gaps charge once to open a run and then to extend it.</li>
+            <li><b>Score each cell.</b> Compare pairing the two letters, adding a gap in Sequence 1, or adding a gap in Sequence 2. Include zero as a restart option, so a local alignment can begin anywhere. Affine scoring tracks the three move states separately; the grid displays their maximum or zero.</li>
+            <li><b>Trace back.</b> Start at a highest-scoring cell and follow its arrows back to a zero restart. Unaligned sequence ends are left out. Diagonal pairs two letters; vertical puts a gap in the column sequence; horizontal puts a gap in the row sequence.</li>
+        </ol>
+    </details>
 
-});
+    <footer>
+        Adapted from <a href="https://github.com/drdrsh/Needleman-Wunsch">drdrsh/Needleman-Wunsch</a>
+        by Chris Lockhart for GMU course BINF 401. Local alignment with simple or matrix scores and simple or affine gaps.
+    </footer>
+</main>
 
-</script>
-<h2>Interactive demo for Smith-Waterman algorithm for simple scoring functions</h2>
-<p>
-This was adapted from <a href="https://github.com/drdrsh/Needleman-Wunsch">https://github.com/drdrsh/Needleman-Wunsch</a> by Chris Lockhart for GMU course BINF 401. It solves Smith-Waterman using for simple scoring functions.
-<br><br>
-<b>See also:</b>
-<ul>
-<li><a href="https://lockhartlab.org/nw">Needleman-Wunsch for simple scoring functions</a></li>
-<li><a href="https://lockhartlab.org/nw_submat">Needleman-Wunsch with substitution matrices</a></li>
-<!--<li><a href="https://lockhartlab.org/sw">Smith-Waterman for simple scoring functions</a></li>-->
-<li><a href="https://lockhartlab.org/sw_submat">Smith-Waterman with substitution matrices</a></li>
-</ul>
-<b>Algorithm:</b>
-<ol>
-<li>Create a table, and write one sequence along the column and another along the rows with one extra row or column at the beginning</li>
-<li>Initialize the first row or column with 0s</li>
-<li>Begin scoring. You can score any cell if the cells diagonal, upper, and left of it have values. You evaluate three scores: (i) The diagonal score plus the  match/mismatch score, (ii) the upper score plus the gap penalty, and (iii) the left score plus the gap penalty. You take whichever score is greatest, and make  a note if that score came from the diagonal, upper, or left cell. If the score is negative, you put a 0 instead.</li>
-<li>Perform traceback. Start from the cell with the highest score, and work your way backward following the indications where the scores came from until you hit a 0. A diagonal move indicates that you accept the letter in the two sequences, a vertical move indicates that you insert a gap into the sequence along the columns and take the letter from the sequence along the rows, and a horizontal move indicates that you insert a gap into the sequence along the rows and take the letter from the sequence along the columns.</li>
-</ol>
-<b>Demo:</b>
-</p>
-<table>
-<tr>
-    <td><label>Sequence 1</label></td>
-    <td colspan="4"><input id="seq_1" class='seq' value="GATTACA" maxlength="20" /></label></td>
-    <td rowspan="10" id="result"></td>
-</tr>
-<tr>
-    <td><label>Sequence 2</label></td>
-    <td colspan="4"><input id="seq_2" class='seq' value="GTCGACG" maxlength="20" /></td>
- </tr>
-<tr colspan="4">
-    <th><label>Match Score</label></th>
-    <th><label>Mismatch Score</label></th>
-    <th><label>Gap Score</label></th>
-</tr>
-<tr>
-    <td><input class="params" id="matchScore" type="number" value="1" /></td>
-    <td><input class="params" id="mismatchScore" type="number" value="-1" /></td>
-    <td><input class="params" id="gapScore" type="number" value="-2" /></td>
-</tr>
-<tr>
-<td colspan="4">
-        <button class="btn-compute">Compute Optimal Alignment</button>
-        <button class="btn-clear">Clear Path</button>
-        <button class="btn-custom">Custom Path</button>
-</tr>
-
-</table>    
-<div id="cont"></div>
 </body>
 </html>
